@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
-	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -63,7 +62,7 @@ func WithBackoff(backoff Backoff) Option {
 	}
 }
 
-func WithLogger(logger *slog.Logger) Option {
+func WithLogger(logger Logger) Option {
 	return func(client *RetryClient) {
 		client.logger = logger
 	}
@@ -79,7 +78,7 @@ type RetryClient struct {
 	backoff      Backoff
 	checkRetry   CheckRetry
 	inner        Client
-	logger       *slog.Logger
+	logger       Logger
 	retryWaitMin time.Duration
 	retryWaitMax time.Duration
 	retryMax     int
@@ -90,7 +89,7 @@ func NewRetryClient(options ...Option) *RetryClient {
 		backoff:      DefaultBackoff(defaultRetryAfterHeader),
 		checkRetry:   DefaultRetryPolicy,
 		inner:        http.DefaultClient,
-		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		logger:       noopLogger{},
 		retryWaitMin: defaultRetryWaitMin,
 		retryWaitMax: defaultRetryWaitMax,
 		retryMax:     defaultRetryMax,
@@ -143,13 +142,14 @@ func (c *RetryClient) Do(req *http.Request) (*http.Response, error) {
 
 		wait := c.backoff(c.retryWaitMin, c.retryWaitMax, i, r)
 
-		if c.logger.Enabled(req.Context(), slog.LevelDebug) {
-			desc := fmt.Sprintf("%s %s", req.Method, req.URL)
-			if r != nil {
-				desc = fmt.Sprintf("%s (status: %d)", desc, r.StatusCode)
-			}
-			c.logger.Debug("retrying request", "request", desc, "timeout", wait, "remaining", remain)
+		var desc string
+		if r == nil {
+			desc = fmt.Sprintf("%s %s", req.Method, req.URL)
+		} else {
+			desc = fmt.Sprintf("%s (status: %d)", desc, r.StatusCode)
 		}
+
+		c.logger.Debug("retrying request", "request", desc, "timeout", wait, "remaining", remain)
 
 		timer := time.NewTimer(wait)
 		select {
